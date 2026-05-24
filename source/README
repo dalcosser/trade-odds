@@ -1,0 +1,32 @@
+Trade Odds — Canonical Dashboard Source (read-only reference)
+=============================================================
+
+This directory contains the SOURCE CODE of the Trade Odds dashboard that runs
+on the home Mac mini. The thin client at /server.mjs proxies to it.
+
+You normally DON'T need this. Just run `run.bat` / `run.sh` in the repo root
+and the thin client serves the live dashboard from the Mac via Cloudflare
+Tunnel — no setup, no API keys.
+
+This source is pushed here for:
+  1. Transparency — see exactly what the dashboard is doing
+  2. Backup — versioned snapshot in git
+  3. Standalone mode — run a fully-local copy (requires API keys + ClickHouse)
+
+To run STANDALONE (advanced):
+  - Need Node 20+
+  - Need a .env with MASSIVE_API_KEY, UW_API_KEY, CLICKHOUSE_URL, etc.
+  - Need the memory/ directory populated (idea_board.json, signals.json, etc.)
+    — these are produced by clawd scanners on the Mac; you'd need to sync them
+  - node source/dashboard.mjs   →  http://localhost:7071
+
+Files:
+  dashboard.mjs                       — main entry, single-file Node http server
+  backfill_earnings_history.mjs       — pulls UW earnings into memory/uw_earnings_history.json
+  lib/clickhouse.mjs                  — ClickHouse query helper
+  lib/massive.mjs                     — Polygon API helper (lib/massive name is historical)
+  lib/uw_api.mjs                      — UW REST client with rate limiter + disk cache
+  lib/signals.mjs                     — signal-bus reader
+
+The canonical instance is daemonized via launchd on the Mac mini:
+  com.dalcosser.clawd-tile-dashboard
