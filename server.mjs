@@ -45,10 +45,14 @@ const __dir = dirname(fileURLToPath(import.meta.url));
   } catch (e) { console.error('[trade-odds] .env load skipped:', e.message); }
 })();
 
+// IMPORTANT: the Cloudflare URL below is EPHEMERAL — it changes when the
+// home-side cloudflared daemon restarts (e.g. Mac mini reboot). The repo
+// is auto-updated whenever it changes; pull latest if the client says
+// "upstream offline" and you suspect a stale URL.
 const DEFAULT_REMOTES = [
-  'https://blink-reg-basketball-dodge.trycloudflare.com',         // Cloudflare Tunnel (works anywhere, no Tailscale)
-  'https://davids-mac-mini.tailfd4a41.ts.net:8443',               // Tailscale Funnel (if Funnel enabled)
-  'http://davids-mac-mini:7071',                                  // Tailscale tailnet (only when on Tailscale)
+  'https://ottawa-specified-katrina-modes.trycloudflare.com',     // Cloudflare Tunnel (current ephemeral URL)
+  'https://davids-mac-mini.tailfd4a41.ts.net:8443',               // Tailscale Funnel (fallback, if Funnel enabled)
+  'http://davids-mac-mini:7071',                                  // Tailscale tailnet (direct, only when on Tailscale)
 ];
 const REMOTES = (process.env.REMOTE_DATA_URL || DEFAULT_REMOTES.join(','))
   .split(',').map(s => s.trim().replace(/\/$/, '')).filter(Boolean);
