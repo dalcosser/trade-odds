@@ -1,0 +1,14 @@
+{
+  "name": "trade-odds-client",
+  "version": "1.0.0",
+  "description": "Trade Odds dashboard thin-client. Proxies to the canonical instance.",
+  "type": "module",
+  "main": "server.mjs",
+  "scripts": {
+    "start": "node server.mjs"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "private": true
+}
