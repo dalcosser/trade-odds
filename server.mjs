@@ -11,9 +11,15 @@
 //   then open      http://localhost:7071
 //
 // CONFIG
-//   REMOTE_DATA_URL  (default below) — the canonical instance to proxy to.
-//                    Override in .env to point at a different host.
-//   PORT             (default 7071)   — local port to listen on.
+//   REMOTE_DATA_URL   one URL, or a comma-separated fallback chain. The client
+//                     picks the first one that responds 200 on /api/state and
+//                     proxies everything to it. If none respond, the user sees
+//                     a clear offline page.
+//                     Default chain (in order):
+//                       1. Cloudflare Tunnel — works on any machine, anywhere
+//                       2. Tailscale Funnel  — fallback if Cloudflare drops
+//                       3. Tailscale tailnet — direct, only when on Tailscale
+//   PORT              (default 7071) — local port to listen on.
 
 import { createServer } from 'node:http';
 import { readFileSync, existsSync } from 'node:fs';
@@ -39,15 +45,47 @@ const __dir = dirname(fileURLToPath(import.meta.url));
   } catch (e) { console.error('[trade-odds] .env load skipped:', e.message); }
 })();
 
-const REMOTE = (process.env.REMOTE_DATA_URL || 'https://davids-mac-mini.tailfd4a41.ts.net:8443').replace(/\/$/, '');
+const DEFAULT_REMOTES = [
+  'https://blink-reg-basketball-dodge.trycloudflare.com',         // Cloudflare Tunnel (works anywhere, no Tailscale)
+  'https://davids-mac-mini.tailfd4a41.ts.net:8443',               // Tailscale Funnel (if Funnel enabled)
+  'http://davids-mac-mini:7071',                                  // Tailscale tailnet (only when on Tailscale)
+];
+const REMOTES = (process.env.REMOTE_DATA_URL || DEFAULT_REMOTES.join(','))
+  .split(',').map(s => s.trim().replace(/\/$/, '')).filter(Boolean);
 const PORT = parseInt(process.env.PORT || '7071', 10);
 
-console.log(`[trade-odds] proxying to: ${REMOTE}`);
+let activeRemote = null;
+let lastProbe = 0;
+async function pickRemote() {
+  // Re-probe every 60s, or whenever the active one fails
+  if (activeRemote && Date.now() - lastProbe < 60_000) return activeRemote;
+  for (const url of REMOTES) {
+    try {
+      const r = await fetch(url + '/api/state', { signal: AbortSignal.timeout(4_000), method: 'HEAD' });
+      // HEAD might 405; treat any non-5xx as alive
+      if (r.status < 500) {
+        if (activeRemote !== url) console.log(`[trade-odds] upstream → ${url}`);
+        activeRemote = url; lastProbe = Date.now();
+        return url;
+      }
+    } catch { /* try next */ }
+  }
+  return null;
+}
+
+console.log(`[trade-odds] upstream candidates (in order):`);
+for (const u of REMOTES) console.log(`  - ${u}`);
 console.log(`[trade-odds] listening on: http://localhost:${PORT}`);
 
 // ---------- proxy server ----------
 const server = createServer(async (req, res) => {
-  const target = REMOTE + req.url;
+  const remote = await pickRemote();
+  if (!remote) {
+    res.writeHead(502, { 'Content-Type': 'text/html; charset=utf-8' });
+    res.end(offlinePage('No upstream reachable. Tried: ' + REMOTES.join(', ')));
+    return;
+  }
+  const target = remote + req.url;
   try {
     // Forward request (GET only — dashboard is read-only)
     const r = await fetch(target, {
@@ -78,32 +116,26 @@ const server = createServer(async (req, res) => {
     }
     res.end();
   } catch (e) {
+    // Mark active remote as bad so next request re-probes
+    activeRemote = null;
     res.writeHead(502, { 'Content-Type': 'text/html; charset=utf-8' });
-    res.end(`
-      <!doctype html><html><head><title>Trade Odds — Offline</title>
-      <style>
-        body{font:14px/1.5 -apple-system,Segoe UI,system-ui;background:#0a0c10;color:#e6edf3;margin:0;padding:60px 40px;max-width:680px}
-        h1{font-size:22px;color:#f85149;margin:0 0 14px}
-        code{background:#1a212c;padding:2px 8px;border-radius:4px;color:#7ee787;font-size:13px}
-        .meta{color:#7a8693;font-size:12px;margin-top:24px;padding-top:14px;border-top:1px solid #232b36}
-      </style></head>
-      <body>
-        <h1>Can't reach the data server</h1>
-        <p>This Trade Odds client tried to proxy to:</p>
-        <p><code>${REMOTE}</code></p>
-        <p>Error: <code>${String(e.message || e)}</code></p>
-        <p>Things to check:</p>
-        <ul>
-          <li>Is the Mac mini at home online and the dashboard daemon running?</li>
-          <li>If you're using Tailscale, is it connected on this machine? (Or is the public Funnel URL enabled?)</li>
-          <li>Override the upstream by setting <code>REMOTE_DATA_URL</code> in <code>.env</code>.</li>
-        </ul>
-        <div class="meta">Trade Odds thin-client · proxy mode · listening on :${PORT}</div>
-      </body></html>
-    `);
+    res.end(offlinePage('Upstream ' + remote + ' failed: ' + String(e.message || e)));
   }
 });
 
+function offlinePage(detail) {
+  return '<!doctype html><html><head><title>Trade Odds — Offline</title>' +
+    '<style>body{font:14px/1.5 -apple-system,Segoe UI,system-ui;background:#0a0c10;color:#e6edf3;margin:0;padding:60px 40px;max-width:680px}' +
+    'h1{font-size:22px;color:#f85149;margin:0 0 14px}code{background:#1a212c;padding:2px 8px;border-radius:4px;color:#7ee787;font-size:12px}' +
+    '.meta{color:#7a8693;font-size:12px;margin-top:24px;padding-top:14px;border-top:1px solid #232b36}' +
+    'li{margin:4px 0}</style></head><body>' +
+    '<h1>Can\'t reach the data server</h1><p>' + detail + '</p>' +
+    '<p>Tried upstream candidates in order:</p><ul>' +
+    REMOTES.map(u => '<li><code>' + u + '</code></li>').join('') +
+    '</ul><p>Override with <code>REMOTE_DATA_URL=https://...</code> in <code>.env</code> (comma-separated chain supported).</p>' +
+    '<div class="meta">Trade Odds thin-client · proxy mode · listening on :' + PORT + '</div></body></html>';
+}
+
 server.listen(PORT, '127.0.0.1', () => {
-  console.log(`[trade-odds] ready — open http://localhost:${PORT}`);
+  console.log('[trade-odds] ready — open http://localhost:' + PORT);
 });
