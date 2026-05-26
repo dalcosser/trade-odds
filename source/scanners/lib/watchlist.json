@@ -1,0 +1,6 @@
+{
+  "watchlist": ["AAOI","AEHR","AXTI","PLTR","TSM","AMAT","LRCX","STX","WDC","MU","SNDK","GE","BA","AVGO","CRWV","NBIS","IREN","HUT","CIFR","ASTS","RKLB","WULF","APO","IONQ","BABA","MP","CRWD","PANW","HOOD","C","BAC","MS","FDX","UPS","DAL","UAL","XOM","CVX","IBM","CSCO","INTC","APP","U","TSLA","RDDT","DASH","SPOT"],
+  "mag7": ["AAPL","MSFT","AMZN","GOOGL","GOOG","META","NVDA"],
+  "extras": ["GS","JPM","CAT","RDW","IBIT","SNDA","VELO","TTWO","AMPX"],
+  "shortTickers": ["C","U","GE","BA","MS","MP","GS","GC"]
+}
