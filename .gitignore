@@ -12,3 +12,10 @@ npm-debug.log*
 
 # Logs
 *.log
+
+# Local data dirs — these get populated at runtime, not source-controlled
+memory/
+source/memory/
+.cache/
+**/*.cache/
+**/.uw_cache/
