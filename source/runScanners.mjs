@@ -79,6 +79,16 @@ const atTime = (et, h, m) => et.hour === h && et.minute === m;
 
 const JOBS = [
   {
+    name: 'idea_board',
+    script: 'idea_board.mjs',
+    args: ['--emit'],
+    desc: '5x daily — 7:30, 10:30, 13:30, 15:30, 16:15 ET',
+    due: (et) => isWeekday(et) && (
+      atTime(et, 7, 30) || atTime(et, 10, 30) || atTime(et, 13, 30) ||
+      atTime(et, 15, 30) || atTime(et, 16, 15)
+    ),
+  },
+  {
     name: 'relative_strength_scan',
     script: 'relative_strength_scan.mjs',
     desc: 'every 30 min during RTH (9:30am–4:00pm ET, Mon–Fri)',
