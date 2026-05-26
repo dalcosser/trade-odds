@@ -13,18 +13,25 @@
 // CONFIG
 //   REMOTE_DATA_URL   one URL, or a comma-separated fallback chain. The client
 //                     picks the first one that responds 200 on /api/state and
-//                     proxies everything to it. If none respond, the user sees
-//                     a clear offline page.
-//                     Default chain (in order):
-//                       1. Cloudflare Tunnel — works on any machine, anywhere
-//                       2. Tailscale Funnel  — fallback if Cloudflare drops
-//                       3. Tailscale tailnet — direct, only when on Tailscale
+//                     proxies everything to it. If none respond, the cache is
+//                     served (see below).
 //   PORT              (default 7071) — local port to listen on.
+//   CACHE_DIR         (default ~/.trade-odds-cache) — where to persist snapshots.
+//   CACHE_DISABLE     set to '1' to skip disk caching entirely.
+//
+// SNAPSHOT MIRRORING (Phase 1)
+//   Every successful proxy response is mirrored to disk. When the upstream is
+//   unreachable, the client serves the cached version + injects a "STALE: last
+//   fresh N min ago" banner into the HTML. Means the dashboard stays usable
+//   even when the Mac mini is rebooting, the Cloudflare tunnel is rotating,
+//   or your laptop is on an island with no connectivity.
 
 import { createServer } from 'node:http';
-import { readFileSync, existsSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, statSync } from 'node:fs';
+import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { homedir } from 'node:os';
+import { createHash } from 'node:crypto';
 
 // ---------- portable .env loader ----------
 const __dir = dirname(fileURLToPath(import.meta.url));
@@ -58,17 +65,69 @@ const REMOTES = (process.env.REMOTE_DATA_URL || DEFAULT_REMOTES.join(','))
   .split(',').map(s => s.trim().replace(/\/$/, '')).filter(Boolean);
 const PORT = parseInt(process.env.PORT || '7071', 10);
 
+// ---------- snapshot cache ----------
+const CACHE_DISABLE = process.env.CACHE_DISABLE === '1';
+const CACHE_DIR = process.env.CACHE_DIR || join(homedir(), '.trade-odds-cache');
+if (!CACHE_DISABLE) {
+  try { if (!existsSync(CACHE_DIR)) mkdirSync(CACHE_DIR, { recursive: true }); }
+  catch (e) { console.error('[trade-odds] cache dir create failed:', e.message); }
+}
+function cacheKey(urlPath) {
+  // Hash the URL path so paths like /api/scan/PANW are filesystem-safe.
+  // Keep a short prefix so we can eyeball what's what when inspecting the dir.
+  const h = createHash('sha1').update(urlPath).digest('hex').slice(0, 12);
+  const prefix = urlPath.replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 40);
+  return prefix + '_' + h;
+}
+function cachePathFor(urlPath, ext = 'bin') {
+  return join(CACHE_DIR, cacheKey(urlPath) + '.' + ext);
+}
+function writeCache(urlPath, buf, contentType) {
+  if (CACHE_DISABLE) return;
+  try {
+    const ext = contentType?.includes('json') ? 'json'
+              : contentType?.includes('html') ? 'html'
+              : contentType?.includes('png') ? 'png'
+              : 'bin';
+    const path = cachePathFor(urlPath, ext);
+    writeFileSync(path, buf);
+    // Sidecar with content-type so we can replay it correctly on cache hit
+    writeFileSync(path + '.meta', JSON.stringify({ contentType, savedAt: Date.now() }));
+  } catch (e) { /* cache write is best-effort */ }
+}
+function readCache(urlPath) {
+  if (CACHE_DISABLE) return null;
+  const exts = ['json', 'html', 'png', 'bin'];
+  for (const ext of exts) {
+    const path = cachePathFor(urlPath, ext);
+    if (!existsSync(path)) continue;
+    try {
+      const buf = readFileSync(path);
+      const metaPath = path + '.meta';
+      const meta = existsSync(metaPath) ? JSON.parse(readFileSync(metaPath, 'utf8')) : { contentType: 'application/octet-stream', savedAt: statSync(path).mtimeMs };
+      return { buf, contentType: meta.contentType, savedAt: meta.savedAt, ageMs: Date.now() - meta.savedAt };
+    } catch { /* try next ext */ }
+  }
+  return null;
+}
+function injectStaleBanner(html, ageMs) {
+  // Floating banner in top-right so it's hard to miss but doesn't break layout
+  const min = Math.round(ageMs / 60000);
+  const ageStr = min < 1 ? 'just now' : min < 60 ? min + 'm ago' : Math.round(min / 60) + 'h ago';
+  const banner = '<div id="trade-odds-stale-banner" style="position:fixed;top:8px;right:8px;z-index:9999;background:rgba(248,81,73,.95);color:#fff;padding:8px 14px;border-radius:6px;font:600 12px/1.3 -apple-system,Segoe UI,system-ui;box-shadow:0 4px 16px rgba(0,0,0,.4)">⚠ Mac mini unreachable — showing snapshot from ' + ageStr + '</div>';
+  if (html.includes('</body>')) return html.replace('</body>', banner + '</body>');
+  return html + banner;
+}
+
 let activeRemote = null;
 let lastProbe = 0;
 async function pickRemote() {
-  // Re-probe every 60s, or whenever the active one fails
   if (activeRemote && Date.now() - lastProbe < 60_000) return activeRemote;
   for (const url of REMOTES) {
     try {
       const r = await fetch(url + '/api/state', { signal: AbortSignal.timeout(4_000), method: 'HEAD' });
-      // HEAD might 405; treat any non-5xx as alive
       if (r.status < 500) {
-        if (activeRemote !== url) console.log(`[trade-odds] upstream → ${url}`);
+        if (activeRemote !== url) console.log('[trade-odds] upstream → ' + url);
         activeRemote = url; lastProbe = Date.now();
         return url;
       }
@@ -77,53 +136,76 @@ async function pickRemote() {
   return null;
 }
 
-console.log(`[trade-odds] upstream candidates (in order):`);
-for (const u of REMOTES) console.log(`  - ${u}`);
-console.log(`[trade-odds] listening on: http://localhost:${PORT}`);
+console.log('[trade-odds] upstream candidates (in order):');
+for (const u of REMOTES) console.log('  - ' + u);
+console.log('[trade-odds] cache dir: ' + (CACHE_DISABLE ? 'disabled' : CACHE_DIR));
+console.log('[trade-odds] listening on: http://localhost:' + PORT);
 
 // ---------- proxy server ----------
-const server = createServer(async (req, res) => {
-  const remote = await pickRemote();
-  if (!remote) {
+async function serveFromCache(req, res, reason) {
+  const cached = readCache(req.url);
+  if (!cached) {
     res.writeHead(502, { 'Content-Type': 'text/html; charset=utf-8' });
-    res.end(offlinePage('No upstream reachable. Tried: ' + REMOTES.join(', ')));
+    res.end(offlinePage(reason + '. No cached snapshot for this URL either.'));
     return;
   }
+  let body = cached.buf;
+  let ct = cached.contentType || 'application/octet-stream';
+  // If it's the HTML dashboard, inject a stale banner so the user sees the warning
+  if (ct.includes('html')) {
+    body = Buffer.from(injectStaleBanner(body.toString('utf8'), cached.ageMs), 'utf8');
+  }
+  res.writeHead(200, {
+    'Content-Type': ct,
+    'Cache-Control': 'no-store',
+    'X-Trade-Odds-Cache': 'stale; age=' + Math.round(cached.ageMs / 1000) + 's',
+  });
+  res.end(body);
+}
+
+const server = createServer(async (req, res) => {
+  const remote = await pickRemote();
+  if (!remote) return serveFromCache(req, res, 'No upstream reachable (tried: ' + REMOTES.join(', ') + ')');
+
   const target = remote + req.url;
   try {
-    // Forward request (GET only — dashboard is read-only)
     const r = await fetch(target, {
       method: req.method,
       headers: {
-        // Don't forward Host (would mismatch the upstream cert)
         'User-Agent': 'trade-odds-client/1.0',
         ...(req.headers.accept ? { Accept: req.headers.accept } : {}),
       },
       signal: AbortSignal.timeout(30_000),
     });
 
-    // Copy status and content-type; let fetch handle the body stream
     const ct = r.headers.get('content-type') || 'text/plain';
-    const headers = {
-      'Content-Type': ct,
-      'Cache-Control': 'no-cache, no-store',
-    };
-    res.writeHead(r.status, headers);
+    // Collect the body so we can both write the response AND mirror to cache.
+    const chunks = [];
     if (r.body) {
-      // Stream through
       const reader = r.body.getReader();
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-        res.write(value);
+        chunks.push(value);
       }
     }
-    res.end();
+    const full = Buffer.concat(chunks.map(c => Buffer.from(c)));
+
+    // Only cache successful responses
+    if (r.status >= 200 && r.status < 300 && full.length > 0) {
+      writeCache(req.url, full, ct);
+    }
+
+    res.writeHead(r.status, {
+      'Content-Type': ct,
+      'Cache-Control': 'no-cache, no-store',
+      'X-Trade-Odds-Cache': 'live',
+    });
+    res.end(full);
   } catch (e) {
-    // Mark active remote as bad so next request re-probes
+    // Live request failed — try the cache
     activeRemote = null;
-    res.writeHead(502, { 'Content-Type': 'text/html; charset=utf-8' });
-    res.end(offlinePage('Upstream ' + remote + ' failed: ' + String(e.message || e)));
+    return serveFromCache(req, res, 'Upstream ' + remote + ' failed: ' + String(e.message || e));
   }
 });
 
@@ -136,7 +218,7 @@ function offlinePage(detail) {
     '<h1>Can\'t reach the data server</h1><p>' + detail + '</p>' +
     '<p>Tried upstream candidates in order:</p><ul>' +
     REMOTES.map(u => '<li><code>' + u + '</code></li>').join('') +
-    '</ul><p>Override with <code>REMOTE_DATA_URL=https://...</code> in <code>.env</code> (comma-separated chain supported).</p>' +
+    '</ul><p>No usable snapshot cached either. Open the dashboard at least once while online so the cache populates, then this fallback will work.</p>' +
     '<div class="meta">Trade Odds thin-client · proxy mode · listening on :' + PORT + '</div></body></html>';
 }
 
