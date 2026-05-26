@@ -25,7 +25,10 @@ import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 
 const __dir = dirname(fileURLToPath(import.meta.url));
-const CACHE_DIR = resolve(__dir, '..', '..', 'memory', 'cache', 'tiingo');
+// Same MEMORY_DIR-aware path as uw_api: lands in <repo>/memory/cache/tiingo.
+const CACHE_DIR = process.env.MEMORY_DIR
+  ? resolve(process.env.MEMORY_DIR, 'cache', 'tiingo')
+  : resolve(__dir, '..', '..', '..', 'memory', 'cache', 'tiingo');
 
 const BASE = 'https://api.tiingo.com';
 const DEFAULT_TTL_MS = 60_000;

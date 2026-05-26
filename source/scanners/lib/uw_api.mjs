@@ -23,7 +23,12 @@ import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 
 const __dir = dirname(fileURLToPath(import.meta.url));
-const CACHE_DIR = resolve(__dir, '..', '..', 'memory', 'cache', 'uw');
+// Path layout in trade-odds: <repo>/source/scanners/lib/uw_api.mjs
+// Cache lives at <repo>/memory/cache/uw — honor MEMORY_DIR env var when set
+// by runScanners.mjs; otherwise compute three levels up.
+const CACHE_DIR = process.env.MEMORY_DIR
+  ? resolve(process.env.MEMORY_DIR, 'cache', 'uw')
+  : resolve(__dir, '..', '..', '..', 'memory', 'cache', 'uw');
 
 const BASE = 'https://api.unusualwhales.com';
 const DEFAULT_TTL_MS = 60_000;
