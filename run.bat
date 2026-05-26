@@ -24,13 +24,27 @@ if %ERRORLEVEL% NEQ 0 (
   exit /b 1
 )
 
-echo.
-echo  Starting Trade Odds client...
-echo  Open http://localhost:7071 in your browser.
+REM Honor STANDALONE / PORT from .env so server.mjs picks the right mode
+set "STANDALONE="
+set "PORT=7071"
+if exist .env (
+  for /f "usebackq tokens=1,* delims==" %%a in (".env") do (
+    if /i "%%a"=="STANDALONE" set "STANDALONE=%%b"
+    if /i "%%a"=="PORT" set "PORT=%%b"
+  )
+)
+
+if "%STANDALONE%"=="1" (
+  echo  Starting Trade Odds in STANDALONE mode...
+  echo  Reads from local memory\*.json. Make sure run-scanners.bat is running too.
+) else (
+  echo  Starting Trade Odds client ^(proxy mode^)...
+)
+echo  Open http://localhost:%PORT% in your browser.
 echo  ^(Ctrl+C in this window to stop.^)
 echo.
 
-start "" http://localhost:7071
+start "" http://localhost:%PORT%
 node server.mjs
 
 echo.

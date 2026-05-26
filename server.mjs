@@ -52,6 +52,25 @@ const __dir = dirname(fileURLToPath(import.meta.url));
   } catch (e) { console.error('[trade-odds] .env load skipped:', e.message); }
 })();
 
+// ─────────────────────────────────────────────────────────────
+// STANDALONE MODE
+// If STANDALONE=1 (or --standalone arg), don't proxy to a remote upstream.
+// Instead run the canonical dashboard (source/dashboard.mjs) IN-PROCESS so
+// this machine serves the dashboard from its own memory/*.json files
+// produced by source/runScanners.mjs. Make sure to start run-scanners.bat
+// (or .sh) in another window so the data actually refreshes.
+// ─────────────────────────────────────────────────────────────
+const STANDALONE = process.env.STANDALONE === '1' || process.argv.includes('--standalone');
+if (STANDALONE) {
+  console.log('[trade-odds] STANDALONE mode — running canonical dashboard locally');
+  console.log('[trade-odds] make sure run-scanners.bat (or .sh) is running too,');
+  console.log('[trade-odds] otherwise memory/ stays empty and tiles will be sparse.');
+  // dashboard.mjs auto-loads .env, starts its own HTTP server on PORT,
+  // reads memory/*.json relative to its own __dirname. Just import + done.
+  await import('./source/dashboard.mjs');
+  // dashboard.mjs holds the event loop alive via its server.listen() call
+} else {
+
 // IMPORTANT: the Cloudflare URL below is EPHEMERAL — it changes when the
 // home-side cloudflared daemon restarts (e.g. Mac mini reboot). The repo
 // is auto-updated whenever it changes; pull latest if the client says
@@ -225,3 +244,5 @@ function offlinePage(detail) {
 server.listen(PORT, '127.0.0.1', () => {
   console.log('[trade-odds] ready — open http://localhost:' + PORT);
 });
+
+} // end !STANDALONE

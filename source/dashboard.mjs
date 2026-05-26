@@ -52,7 +52,7 @@ const { polygonUrl } = await import('./lib/massive.mjs');
 const __dir = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dir, '..');
 const MEMORY = join(ROOT, 'memory');
-const PORT = 7071;
+const PORT = parseInt(process.env.PORT || '7071', 10);
 
 // ---------- helpers ----------
 async function readJSON(path, fallback = null) {
