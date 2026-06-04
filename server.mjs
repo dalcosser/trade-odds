@@ -76,7 +76,7 @@ if (STANDALONE) {
 // is auto-updated whenever it changes; pull latest if the client says
 // "upstream offline" and you suspect a stale URL.
 const DEFAULT_REMOTES = [
-  'https://ottawa-specified-katrina-modes.trycloudflare.com',     // Cloudflare Tunnel (current ephemeral URL)
+  'https://boss-conceptual-extending-veteran.trycloudflare.com',     // Cloudflare Tunnel (current ephemeral URL)
   'https://davids-mac-mini.tailfd4a41.ts.net:8443',               // Tailscale Funnel (fallback, if Funnel enabled)
   'http://davids-mac-mini:7071',                                  // Tailscale tailnet (direct, only when on Tailscale)
 ];
